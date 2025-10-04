@@ -49,6 +49,32 @@ enum FakePins {
         }
         return pins
     }
+
+    // Friends-only seed with notes attached
+    static func seedFriends(around center: CLLocationCoordinate2D, forRadiusKm radiusKm: Double) -> [EmojiPin] {
+        let base = seed(around: center, forRadiusKm: radiusKm)
+        let notes = [
+            "Coffee at Blue Bottle ☕️",
+            "Pickup soccer 6pm ⚽️",
+            "Concert tonight at the park 🎵",
+            "New ramen spot is amazing 🍜",
+            "Traffic on 3rd Ave, avoid! 🚧",
+            "Gym session done 💪",
+            "Beach day vibes 🏖️",
+            "Study group here 📚"
+        ]
+        return base.enumerated().map { idx, pin in
+            EmojiPin(
+                id: pin.id,
+                emoji: pin.emoji,
+                latitude: pin.latitude,
+                longitude: pin.longitude,
+                timePlaced: pin.timePlaced,
+                visibility: .friends,
+                note: notes[idx % notes.count]
+            )
+        }
+    }
 }
 
 private func coordinate(from start: CLLocationCoordinate2D, bearingDegrees: Double, distanceMeters: CLLocationDistance) -> CLLocationCoordinate2D {

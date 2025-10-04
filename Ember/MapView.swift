@@ -9,31 +9,6 @@ import SwiftUI
 import MapKit
 import CoreLocation
 import Combine
-import UIKit
-
-// Explicit map accent to avoid Map overlay defaulting to black
-private let mapAccent: Color = Color(.systemBlue)
-// Expanded emoji catalog for the slider (common, crime, sports, misc)
-private let emojiCatalog: [[String]] = [
-    ["🙂", "😂", "😍", "😢", "😡"], // Common
-    ["🚨", "🚓", "👮‍♂️", "🔪", "🧨"], // Crime-related
-    ["⚽️", "🏀", "🏈", "🎾", "⚾️", "🏐", "🏉", "🥊"], // Sports
-    ["🎉", "🎵", "🍻", "☕️", "🍕", "🍔", "🍜"] // Misc
-]
-
-enum Visibility: String, Codable, CaseIterable, Identifiable {
-    case `public` = "public"
-    case friends = "friends"
-    case anonymous = "anonymous"
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .public: return "Public"
-        case .friends: return "Friends Only"
-        case .anonymous: return "Anonymous to All"
-        }
-    }
-}
 
 // Show the map view with emoji pinning
 struct MapView: View {
@@ -68,6 +43,11 @@ struct MapView: View {
     @State private var placeVisibility: Visibility = .public
     @State private var placeNote: String = ""
 
+    // Scope
+    @State private var scope: Scope = .everyone
+    @State private var friendPins: [EmojiPin] = []
+    @State private var selectedFriendPin: EmojiPin?
+
     var body: some View {
         ZStack(alignment: .bottom) {
             Map(position: $position) {
@@ -80,11 +60,27 @@ struct MapView: View {
                     }
                 }
 
-                // Active fake-pin popouts
-                ForEach(activeFakePins) { pin in
-                    Annotation("popup-\(pin.id)", coordinate: pin.coordinate) {
-                        PopEmojiBadge(emoji: pin.emoji) {
-                            activePopups.remove(pin.id)
+                // Active fake-pin popouts (Everyone scope only)
+                if scope == .everyone {
+                    ForEach(activeFakePins) { pin in
+                        Annotation("popup-\(pin.id)", coordinate: pin.coordinate) {
+                            PopEmojiBadge(emoji: pin.emoji) {
+                                activePopups.remove(pin.id)
+                            }
+                        }
+                    }
+                }
+
+                // Static friends pins (Friends scope only)
+                if scope == .friends {
+                    ForEach(filteredFriendPins) { pin in
+                        Annotation("friend-\(pin.id)", coordinate: pin.coordinate) {
+                            Button {
+                                selectedFriendPin = pin
+                            } label: {
+                                EmojiBadge(emoji: pin.emoji)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -102,7 +98,7 @@ struct MapView: View {
             // Custom SwiftUI overlay that draws a red filled pulse in screen space
             .overlay {
                 GeometryReader { geo in
-                    if let region = currentRegion, let userCoord = locationManager.location?.coordinate {
+                    if scope == .everyone, let region = currentRegion, let userCoord = locationManager.location?.coordinate {
                         let centerPoint = pointOnScreen(for: userCoord, in: region, size: geo.size)
                         let currentMeters = max(50, pulseRadiusMeters)
                         let pixelRadius = pixels(forMeters: currentMeters, atLatitude: userCoord.latitude, in: region, size: geo.size)
@@ -148,6 +144,20 @@ struct MapView: View {
                 MapCompass()
             }
 
+            // Scope picker overlay at top
+            .overlay(alignment: .top) {
+                HStack {
+                    Picker("Scope", selection: $scope) {
+                        ForEach(Scope.allCases) { s in
+                            Text(s.label).tag(s)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .padding(.horizontal)
+                .padding(.top, 10)
+            }
+
             // Controls overlay
             VStack(spacing: 12) {
                 // Emoji slider: scroll right to reveal more categories
@@ -178,8 +188,6 @@ struct MapView: View {
                     Button(action: placeSelectedEmoji) {
                         HStack(spacing: 6) {
                             Text(selectedEmoji)
-                            Text("Place")
-                                .font(.system(size: 13, weight: .semibold))
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
@@ -218,6 +226,11 @@ struct MapView: View {
                 fakePinsGenerated = true
             }
             #endif
+            #if DEBUG
+            if FakePins.enabled {
+                friendPins = FakePins.seedFriends(around: c, forRadiusKm: radiusKm)
+            }
+            #endif
         }
         .onChange(of: radiusKm) { newRadius in
             if let c = locationManager.location?.coordinate {
@@ -229,6 +242,11 @@ struct MapView: View {
                 // Keep active popups that still exist
                 let valid = Set(fakePins.map { $0.id })
                 activePopups = activePopups.intersection(valid)
+            }
+            #endif
+            #if DEBUG
+            if FakePins.enabled, let c = locationManager.location?.coordinate {
+                friendPins = FakePins.seedFriends(around: c, forRadiusKm: newRadius)
             }
             #endif
             triggerPulse()
@@ -243,7 +261,7 @@ struct MapView: View {
             Text("We couldn't access your location. Please enable location permissions in Settings.")
         }
         .onReceive(pulseTimer) { _ in
-            triggerPulse()
+            if scope == .everyone { triggerPulse() }
         }
         .sheet(isPresented: $showPlaceSheet) {
             PlacePinSheet(selectedEmoji: selectedEmoji, visibility: $placeVisibility, note: $placeNote) {
@@ -254,6 +272,10 @@ struct MapView: View {
             }
             .presentationDetents([.height(250)])
         }
+        .sheet(item: $selectedFriendPin) { pin in
+            FriendNoteSheet(pin: pin, userLocation: locationManager.location)
+                .presentationDetents([.height(240)])
+        }
     }
 
     // Pins filtered by selected radius from current location (defaults to all if no fix)
@@ -261,6 +283,14 @@ struct MapView: View {
         guard let userCoord = locationManager.location?.coordinate else { return pins }
         let limitMeters = radiusKm * 1000
         return pins.filter { pin in
+            distanceMeters(userCoord, pin.coordinate) <= limitMeters
+        }
+    }
+
+    private var filteredFriendPins: [EmojiPin] {
+        guard let userCoord = locationManager.location?.coordinate else { return friendPins }
+        let limitMeters = radiusKm * 1000
+        return friendPins.filter { pin in
             distanceMeters(userCoord, pin.coordinate) <= limitMeters
         }
     }
@@ -293,6 +323,7 @@ struct MapView: View {
     }
 
     private func triggerPulse() {
+        guard scope == .everyone else { return }
         // Reset then animate outward and fade to selected radius
         pulseId &+= 1
         pulseRadiusMeters = 0
@@ -341,228 +372,4 @@ struct MapView: View {
     }
 }
 
-#Preview {
-    MapView()
-}
-
-// MARK: - Models & Utilities (kept in-file to avoid project changes)
-
-final class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
-    @Published var location: CLLocation?
-    private let manager = CLLocationManager()
-
-    override init() {
-        super.init()
-        manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-    }
-
-    func requestWhenInUseAuthorization() {
-        manager.requestWhenInUseAuthorization()
-        if CLLocationManager.locationServicesEnabled() {
-            manager.startUpdatingLocation()
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        switch status {
-        case .authorizedAlways, .authorizedWhenInUse:
-            manager.startUpdatingLocation()
-        default:
-            break
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        location = locations.last
-    }
-}
-
-struct EmojiPin: Identifiable, Codable, Hashable {
-    let id: UUID
-    let emoji: String
-    let latitude: Double
-    let longitude: Double
-    let timePlaced: Date
-    let visibility: Visibility?
-    let note: String?
-
-    var coordinate: CLLocationCoordinate2D {
-        .init(latitude: latitude, longitude: longitude)
-    }
-
-    static let defaultEmojis: [String] = ["🙂", "😂", "😍", "😢", "😡"]
-}
-
-enum PinsStore {
-    private static let key = "emojiPins"
-
-    static func load() -> [EmojiPin] {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
-        return (try? JSONDecoder().decode([EmojiPin].self, from: data)) ?? []
-    }
-
-    static func save(_ pins: [EmojiPin]) {
-        if let data = try? JSONEncoder().encode(pins) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
-    }
-}
-
-@inline(__always)
-private func distanceMeters(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> CLLocationDistance {
-    let la = CLLocation(latitude: a.latitude, longitude: a.longitude)
-    let lb = CLLocation(latitude: b.latitude, longitude: b.longitude)
-    return la.distance(from: lb)
-}
-
-@inline(__always)
-private func spanFor(radiusKm: Double, atLatitude lat: Double) -> MKCoordinateSpan {
-    // Convert target radius (km) to a region span (degrees) that roughly frames a diameter = 2 * radius
-    let radiusMeters = max(100.0, radiusKm * 1000.0)
-    let degPerMeterLat = 1.0 / 111_000.0
-    let latDelta = (radiusMeters * degPerMeterLat) * 2.2 // padding factor
-
-    let latRad = abs(lat) * .pi / 180.0
-    let metersPerDegLon = 111_320.0 * max(0.1, cos(latRad))
-    let degPerMeterLon = 1.0 / metersPerDegLon
-    let lonDelta = (radiusMeters * degPerMeterLon) * 2.2
-
-    // Clamp deltas to reasonable bounds
-    let clampedLat = min(max(latDelta, 0.005), 60)
-    let clampedLon = min(max(lonDelta, 0.005), 60)
-    return MKCoordinateSpan(latitudeDelta: clampedLat, longitudeDelta: clampedLon)
-}
-
-// Convert a meters distance to screen pixels for the current region and view size
-@inline(__always)
-private func pixels(forMeters meters: CLLocationDistance, atLatitude lat: Double, in region: MKCoordinateRegion, size: CGSize) -> CGFloat {
-    // Degrees corresponding to the distance
-    let degPerMeterLat = 1.0 / 111_000.0
-    let latDelta = meters * degPerMeterLat
-
-    let latRad = abs(lat) * .pi / 180.0
-    let metersPerDegLon = 111_320.0 * max(0.1, cos(latRad))
-    let degPerMeterLon = 1.0 / metersPerDegLon
-    let lonDelta = meters * degPerMeterLon
-
-    let pxX = CGFloat(lonDelta / max(region.span.longitudeDelta, 1e-6)) * size.width
-    let pxY = CGFloat(latDelta / max(region.span.latitudeDelta, 1e-6)) * size.height
-    return max(1, min(pxX, pxY))
-}
-
-// Convert a coordinate to a point in the map's local view coordinates given the current region
-@inline(__always)
-private func pointOnScreen(for coord: CLLocationCoordinate2D, in region: MKCoordinateRegion, size: CGSize) -> CGPoint {
-    let dx = coord.longitude - region.center.longitude
-    let dy = coord.latitude - region.center.latitude
-    let x = size.width * 0.5 + CGFloat(dx / max(region.span.longitudeDelta, 1e-6)) * size.width
-    let y = size.height * 0.5 - CGFloat(dy / max(region.span.latitudeDelta, 1e-6)) * size.height
-    return CGPoint(x: x, y: y)
-}
-
-// Stylized emoji marker
-private struct EmojiBadge: View {
-    let emoji: String
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color(.systemBackground))
-                .frame(width: 36, height: 36)
-                .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
-            Text(emoji)
-                .font(.system(size: 20))
-        }
-    }
-}
-
-// Live preview marker at user location for the currently selected emoji
-private struct PreviewEmojiBadge: View {
-    let emoji: String
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color(.systemBackground).opacity(0.85))
-                .frame(width: 40, height: 40)
-                .overlay(
-                    Circle().stroke(Color.accentColor.opacity(0.6), lineWidth: 2)
-                )
-                .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
-            Text(emoji)
-                .font(.system(size: 22))
-        }
-    }
-}
-
-// Animated pop-out badge used when a fake pin is hit by the pulse
-private struct PopEmojiBadge: View {
-    let emoji: String
-    var onDone: () -> Void
-    @State private var scale: CGFloat = 0.6
-    @State private var opacity: Double = 0.0
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color(.systemBackground))
-                .frame(width: 48, height: 48)
-                .shadow(color: .black.opacity(0.2), radius: 6, x: 0, y: 3)
-            Text(emoji)
-                .font(.system(size: 26))
-        }
-        .scaleEffect(scale)
-        .opacity(opacity)
-        .onAppear {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.7, blendDuration: 0)) {
-                scale = 1.2
-                opacity = 1.0
-            }
-            withAnimation(.easeOut(duration: 0.25).delay(0.35)) {
-                scale = 1.0
-            }
-            withAnimation(.easeOut(duration: 0.4).delay(0.9)) {
-                opacity = 0.0
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
-                onDone()
-            }
-        }
-    }
-}
-
-// Bottom sheet for visibility + optional note
-private struct PlacePinSheet: View {
-    let selectedEmoji: String
-    @Binding var visibility: Visibility
-    @Binding var note: String
-    var onConfirm: () -> Void
-    var onCancel: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Place Pin")
-                    .font(.headline)
-                Spacer()
-                Text(selectedEmoji).font(.title2)
-            }
-            Picker("Visibility", selection: $visibility) {
-                ForEach(Visibility.allCases) { v in
-                    Text(v.label).tag(v)
-                }
-            }
-            .pickerStyle(.segmented)
-            TextField("Add a note (optional)", text: $note)
-                .textFieldStyle(.roundedBorder)
-
-            HStack {
-                Button("Cancel", role: .cancel) { onCancel() }
-                Spacer()
-                Button("Confirm") { onConfirm() }
-                    .buttonStyle(.borderedProminent)
-            }
-            .padding(.top, 4)
-        }
-        .padding()
-    }
-}
+#Preview { MapView() }
