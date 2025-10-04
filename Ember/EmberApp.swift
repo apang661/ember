@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct EmberApp: App {
+    @StateObject private var auth = AuthStore()
     var body: some Scene {
         WindowGroup {
-            MapView()
+            ContentView()
+                .environmentObject(auth)
         }
     }
 }

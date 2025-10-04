@@ -47,6 +47,7 @@ struct MapView: View {
     @State private var scope: Scope = .everyone
     @State private var friendPins: [EmojiPin] = []
     @State private var selectedFriendPin: EmojiPin?
+    @State private var showSettings: Bool = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -139,11 +140,19 @@ struct MapView: View {
                     }
                 }
             }
-            .mapControls {
-                MapUserLocationButton()
-                MapCompass()
+            .overlay(alignment: .topTrailing) {
+                Button(action: recenterOnUser) {
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.primary)
+                        .padding(10)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
+                }
+                .padding(.trailing, 12)
+                .padding(.top, 56)
             }
-
+            
             // Scope picker overlay at top
             .overlay(alignment: .top) {
                 HStack {
@@ -156,6 +165,21 @@ struct MapView: View {
                 }
                 .padding(.horizontal)
                 .padding(.top, 10)
+            }
+            // Settings button overlay at top-leading
+            .overlay(alignment: .topLeading) {
+                Button {
+                    showSettings = true
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.primary)
+                        .padding(10)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
+                }
+                .padding(.leading, 12)
+                .padding(.top, 56)
             }
 
             // Controls overlay
@@ -276,6 +300,9 @@ struct MapView: View {
             FriendNoteSheet(pin: pin, userLocation: locationManager.location)
                 .presentationDetents([.height(240)])
         }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+        }
     }
 
     // Pins filtered by selected radius from current location (defaults to all if no fix)
@@ -320,6 +347,14 @@ struct MapView: View {
         placeVisibility = .public
         placeNote = ""
         showPlaceSheet = true
+    }
+
+    private func recenterOnUser() {
+        guard let c = locationManager.location?.coordinate else {
+            showLocationAlert = true
+            return
+        }
+        updateCamera(center: c, radiusKm: radiusKm, animated: true)
     }
 
     private func triggerPulse() {
