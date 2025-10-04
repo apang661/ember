@@ -45,7 +45,7 @@ enum FakePins {
             let bearing = Double((seedIndex * 36) % 360) // spread bearings
             let coord = coordinate(from: center, bearingDegrees: bearing, distanceMeters: meters)
             let emoji = emojis[(seedIndex) % emojis.count]
-            pins.append(EmojiPin(id: UUID(), emoji: emoji, latitude: coord.latitude, longitude: coord.longitude, timePlaced: Date()))
+            pins.append(EmojiPin(id: UUID(), emoji: emoji, latitude: coord.latitude, longitude: coord.longitude, timePlaced: Date(), visibility: nil, note: nil))
         }
         return pins
     }

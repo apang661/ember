@@ -13,6 +13,27 @@ import UIKit
 
 // Explicit map accent to avoid Map overlay defaulting to black
 private let mapAccent: Color = Color(.systemBlue)
+// Expanded emoji catalog for the slider (common, crime, sports, misc)
+private let emojiCatalog: [[String]] = [
+    ["🙂", "😂", "😍", "😢", "😡"], // Common
+    ["🚨", "🚓", "👮‍♂️", "🔪", "🧨"], // Crime-related
+    ["⚽️", "🏀", "🏈", "🎾", "⚾️", "🏐", "🏉", "🥊"], // Sports
+    ["🎉", "🎵", "🍻", "☕️", "🍕", "🍔", "🍜"] // Misc
+]
+
+enum Visibility: String, Codable, CaseIterable, Identifiable {
+    case `public` = "public"
+    case friends = "friends"
+    case anonymous = "anonymous"
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .public: return "Public"
+        case .friends: return "Friends Only"
+        case .anonymous: return "Anonymous to All"
+        }
+    }
+}
 
 // Show the map view with emoji pinning
 struct MapView: View {
@@ -42,6 +63,11 @@ struct MapView: View {
     @State private var pulseId: Int = 0
     private let pulseDuration: Double = 1.8
 
+    // Place flow
+    @State private var showPlaceSheet: Bool = false
+    @State private var placeVisibility: Visibility = .public
+    @State private var placeNote: String = ""
+
     var body: some View {
         ZStack(alignment: .bottom) {
             Map(position: $position) {
@@ -60,6 +86,13 @@ struct MapView: View {
                         PopEmojiBadge(emoji: pin.emoji) {
                             activePopups.remove(pin.id)
                         }
+                    }
+                }
+
+                // Preview of selected emoji at user location before placing
+                if let userCoord = locationManager.location?.coordinate {
+                    Annotation("preview", coordinate: userCoord) {
+                        PreviewEmojiBadge(emoji: selectedEmoji)
                     }
                 }
             }
@@ -117,27 +150,42 @@ struct MapView: View {
 
             // Controls overlay
             VStack(spacing: 12) {
-                // One-tap pinning with big emoji buttons
-                HStack(spacing: 10) {
-                    ForEach(EmojiPin.defaultEmojis, id: \.self) { e in
-                        Button {
-                            selectedEmoji = e
-                            pinCurrentLocation(emoji: e)
-                        } label: {
-                            Text(e)
-                                .font(.system(size: 22))
-                                .frame(width: 44, height: 44)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(selectedEmoji == e ? Color.accentColor.opacity(0.15) : Color(.secondarySystemBackground))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .stroke(selectedEmoji == e ? Color.accentColor : Color.gray.opacity(0.25), lineWidth: selectedEmoji == e ? 1.5 : 1)
-                                )
+                // Emoji slider: scroll right to reveal more categories
+                HStack(alignment: .center, spacing: 10) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(allEmojis, id: \.self) { e in
+                                Button {
+                                    selectedEmoji = e
+                                } label: {
+                                    Text(e)
+                                        .font(.system(size: 22))
+                                        .frame(width: 44, height: 44)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .fill(selectedEmoji == e ? Color.accentColor.opacity(0.18) : Color(.secondarySystemBackground))
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .stroke(selectedEmoji == e ? Color.accentColor : Color.gray.opacity(0.25), lineWidth: selectedEmoji == e ? 1.5 : 1)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .padding(.vertical, 2)
                     }
+                    Button(action: placeSelectedEmoji) {
+                        HStack(spacing: 6) {
+                            Text(selectedEmoji)
+                            Text("Place")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(locationManager.location == nil)
                 }
 
                 // Radius selection
@@ -197,6 +245,15 @@ struct MapView: View {
         .onReceive(pulseTimer) { _ in
             triggerPulse()
         }
+        .sheet(isPresented: $showPlaceSheet) {
+            PlacePinSheet(selectedEmoji: selectedEmoji, visibility: $placeVisibility, note: $placeNote) {
+                pinCurrentLocation(emoji: selectedEmoji, visibility: placeVisibility, note: placeNote)
+                showPlaceSheet = false
+            } onCancel: {
+                showPlaceSheet = false
+            }
+            .presentationDetents([.height(250)])
+        }
     }
 
     // Pins filtered by selected radius from current location (defaults to all if no fix)
@@ -208,7 +265,7 @@ struct MapView: View {
         }
     }
 
-    private func pinCurrentLocation(emoji: String) {
+    private func pinCurrentLocation(emoji: String, visibility: Visibility? = nil, note: String? = nil) {
         guard let loc = locationManager.location?.coordinate else {
             showLocationAlert = true
             return
@@ -218,9 +275,21 @@ struct MapView: View {
             emoji: emoji,
             latitude: loc.latitude,
             longitude: loc.longitude,
-            timePlaced: Date()
+            timePlaced: Date(),
+            visibility: visibility,
+            note: (note?.isEmpty ?? true) ? nil : note
         )
         pins.append(new)
+    }
+
+    private func placeSelectedEmoji() {
+        guard locationManager.location != nil else {
+            showLocationAlert = true
+            return
+        }
+        placeVisibility = .public
+        placeNote = ""
+        showPlaceSheet = true
     }
 
     private func triggerPulse() {
@@ -261,6 +330,10 @@ struct MapView: View {
         } else {
             position = .region(region)
         }
+    }
+
+    private var allEmojis: [String] {
+        emojiCatalog.flatMap { $0 }
     }
 
     private var activeFakePins: [EmojiPin] {
@@ -311,6 +384,8 @@ struct EmojiPin: Identifiable, Codable, Hashable {
     let latitude: Double
     let longitude: Double
     let timePlaced: Date
+    let visibility: Visibility?
+    let note: String?
 
     var coordinate: CLLocationCoordinate2D {
         .init(latitude: latitude, longitude: longitude)
@@ -401,6 +476,24 @@ private struct EmojiBadge: View {
     }
 }
 
+// Live preview marker at user location for the currently selected emoji
+private struct PreviewEmojiBadge: View {
+    let emoji: String
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(.systemBackground).opacity(0.85))
+                .frame(width: 40, height: 40)
+                .overlay(
+                    Circle().stroke(Color.accentColor.opacity(0.6), lineWidth: 2)
+                )
+                .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
+            Text(emoji)
+                .font(.system(size: 22))
+        }
+    }
+}
+
 // Animated pop-out badge used when a fake pin is hit by the pulse
 private struct PopEmojiBadge: View {
     let emoji: String
@@ -434,5 +527,42 @@ private struct PopEmojiBadge: View {
                 onDone()
             }
         }
+    }
+}
+
+// Bottom sheet for visibility + optional note
+private struct PlacePinSheet: View {
+    let selectedEmoji: String
+    @Binding var visibility: Visibility
+    @Binding var note: String
+    var onConfirm: () -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Place Pin")
+                    .font(.headline)
+                Spacer()
+                Text(selectedEmoji).font(.title2)
+            }
+            Picker("Visibility", selection: $visibility) {
+                ForEach(Visibility.allCases) { v in
+                    Text(v.label).tag(v)
+                }
+            }
+            .pickerStyle(.segmented)
+            TextField("Add a note (optional)", text: $note)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Button("Cancel", role: .cancel) { onCancel() }
+                Spacer()
+                Button("Confirm") { onConfirm() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(.top, 4)
+        }
+        .padding()
     }
 }
