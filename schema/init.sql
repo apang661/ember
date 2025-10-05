@@ -3,7 +3,7 @@ CREATE TABLE users (
     id              BIGSERIAL PRIMARY KEY,                 -- internal DB ID
     uuid            UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(), -- external safe ID
     email           VARCHAR(255) UNIQUE NOT NULL,
-    password_hash   TEXT NOT NULL,                         -- bcrypt/argon2
+    password_hash   TEXT NOT NULL,                         -- bcrypt
     username        VARCHAR(50) UNIQUE NOT NULL,
     display_name    VARCHAR(100),
     bio             TEXT,
@@ -29,7 +29,7 @@ CREATE TABLE pins (
     emotion         VARCHAR(50) NOT NULL,                  -- e.g., happy, sad, excited
     message         TEXT,                                  -- optional message
     location        GEOGRAPHY(Point, 4326) NOT NULL,      -- PostGIS: lat/lng
-    visibility      VARCHAR(20) NOT NULL CHECK (visibility IN ('public','friends')),
+    visibility      VARCHAR(20) NOT NULL CHECK (visibility IN ('public','friends','private')),
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     expires_at      TIMESTAMPTZ                               -- optional auto-expire
 );
