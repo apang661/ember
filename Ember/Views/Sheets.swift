@@ -20,7 +20,6 @@ struct PlacePinSheet: View {
             HStack {
                 Text("Place Pin")
                     .font(.headline)
-                Spacer()
                 Text(selectedEmoji).font(.title2)
             }
             Picker("Visibility", selection: $visibility) {
@@ -31,6 +30,11 @@ struct PlacePinSheet: View {
             .pickerStyle(.segmented)
             TextField("Add a note (optional)", text: $note)
                 .textFieldStyle(.roundedBorder)
+                .onChange(of: note) {
+                    if note.count > 80 {
+                        note = String(note.prefix(80))
+                    }
+                }
 
             HStack {
                 Button("Cancel", role: .cancel) { onCancel() }
@@ -60,11 +64,12 @@ struct FriendNoteSheet: View {
             }
             Divider()
             if let note = pin.note, !note.isEmpty {
-                Text(note).font(.body)
+                Text(note)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("No note provided").foregroundStyle(.secondary)
             }
-            Spacer()
         }
         .padding()
     }
@@ -79,4 +84,3 @@ struct FriendNoteSheet: View {
         }
     }
 }
-

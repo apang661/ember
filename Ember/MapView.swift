@@ -64,7 +64,7 @@ struct MapView: View {
                 // Active fake-pin popouts (Everyone scope only)
                 if scope == .everyone {
                     ForEach(activeFakePins) { pin in
-                        Annotation("popup-\(pin.id)", coordinate: pin.coordinate) {
+                        Annotation("", coordinate: pin.coordinate) {
                             PopEmojiBadge(emoji: pin.emoji) {
                                 activePopups.remove(pin.id)
                             }
@@ -88,7 +88,7 @@ struct MapView: View {
 
                 // Preview of selected emoji at user location before placing
                 if let userCoord = locationManager.location?.coordinate {
-                    Annotation("preview", coordinate: userCoord) {
+                    Annotation("Me", coordinate: userCoord) {
                         PreviewEmojiBadge(emoji: selectedEmoji)
                     }
                 }
@@ -102,7 +102,9 @@ struct MapView: View {
                     if scope == .everyone, let region = currentRegion, let userCoord = locationManager.location?.coordinate {
                         let centerPoint = pointOnScreen(for: userCoord, in: region, size: geo.size)
                         let currentMeters = max(50, pulseRadiusMeters)
-                        let pixelRadius = pixels(forMeters: currentMeters, atLatitude: userCoord.latitude, in: region, size: geo.size)
+                        // Clamp pixel radius to avoid huge GPU resources (fixes 'resource exceeds maximum size')
+                        let rawPixelRadius = pixels(forMeters: currentMeters, atLatitude: userCoord.latitude, in: region, size: geo.size)
+                        let pixelRadius = min(rawPixelRadius, 600) // cap to 600px
                         let targetMeters = max(50, radiusKm * 1000.0)
                         let progress = min(max(currentMeters / targetMeters, 0.0), 1.0)
                         let fadeStart: CGFloat = 0.995 // fade only when extremely close to the edge
@@ -256,7 +258,7 @@ struct MapView: View {
             }
             #endif
         }
-        .onChange(of: radiusKm) { newRadius in
+        .onChange(of: radiusKm) { _, newRadius in
             if let c = locationManager.location?.coordinate {
                 updateCamera(center: c, radiusKm: newRadius, animated: true)
             }
@@ -276,7 +278,7 @@ struct MapView: View {
             triggerPulse()
         }
         // Removed onChange(of: position) to avoid pattern matching on MapCameraPosition
-        .onChange(of: pins) { newPins in
+        .onChange(of: pins) { _, newPins in
             PinsStore.save(newPins)
         }
         .alert("Location Unavailable", isPresented: $showLocationAlert) {
@@ -298,7 +300,8 @@ struct MapView: View {
         }
         .sheet(item: $selectedFriendPin) { pin in
             FriendNoteSheet(pin: pin, userLocation: locationManager.location)
-                .presentationDetents([.height(240)])
+                .presentationDetents([.height(noteSheetHeight(for: pin))])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
@@ -357,6 +360,14 @@ struct MapView: View {
         updateCamera(center: c, radiusKm: radiusKm, animated: true)
     }
 
+    private func noteSheetHeight(for pin: EmojiPin) -> CGFloat {
+        let base: CGFloat = 0
+        let count = pin.note?.count ?? 0
+        // Roughly add height per 60 chars, clamp to a sane range
+        let extra = CGFloat(max(0, (count / 60))) * 22
+        return min(max(base + extra, 160), 420)
+    }
+
     private func triggerPulse() {
         guard scope == .everyone else { return }
         // Reset then animate outward and fade to selected radius
@@ -406,5 +417,3 @@ struct MapView: View {
         fakePins.filter { activePopups.contains($0.id) }
     }
 }
-
-#Preview { MapView() }

@@ -10,40 +10,32 @@ import Combine
 
 final class AuthStore: ObservableObject {
     @Published var isAuthenticated: Bool = false
-    @Published var username: String? = nil
+    @Published var email: String? = nil
 
     private let tokenKey = "auth_token"
-    private let userKey = "auth_user"
+    private let emailKey = "auth_email"
 
     init() {
         if let token = UserDefaults.standard.string(forKey: tokenKey), !token.isEmpty {
             self.isAuthenticated = true
-            self.username = UserDefaults.standard.string(forKey: userKey)
+            self.email = UserDefaults.standard.string(forKey: emailKey)
         }
     }
 
-    func login(username: String, password: String) -> Bool {
-        // Fake credentials; adjust as needed
-        let allowed: [String: String] = [
-            "demo": "ember",
-            "alice": "1234",
-            "bob": "password"
-        ]
-        if allowed[username] == password {
-            let token = "fake-token-\(UUID().uuidString)"
-            UserDefaults.standard.set(token, forKey: tokenKey)
-            UserDefaults.standard.set(username, forKey: userKey)
-            self.username = username
-            self.isAuthenticated = true
-            return true
-        }
-        return false
+    func login(email: String, password: String) async throws -> Bool {
+        let res = try await AuthAPI.login(email: email, password: password)
+        // Persist token + email and mark session as authenticated
+        UserDefaults.standard.set(res.token, forKey: tokenKey)
+        UserDefaults.standard.set(email, forKey: emailKey)
+        self.email = email
+        self.isAuthenticated = true
+        return true
     }
 
     func logout() {
         UserDefaults.standard.removeObject(forKey: tokenKey)
-        UserDefaults.standard.removeObject(forKey: userKey)
-        self.username = nil
+        UserDefaults.standard.removeObject(forKey: emailKey)
+        self.email = nil
         self.isAuthenticated = false
     }
 }

@@ -24,7 +24,7 @@ struct SettingsView: View {
                     HStack {
                         Text("Signed in as")
                         Spacer()
-                        Text(auth.username ?? "Unknown")
+                        Text(auth.email ?? "Unknown")
                             .foregroundStyle(.secondary)
                     }
                     Button(role: .destructive) {
