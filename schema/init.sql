@@ -17,7 +17,7 @@ CREATE TABLE friendships (
     id              BIGSERIAL PRIMARY KEY,
     user_id         BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     friend_id       BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    status          VARCHAR(20) NOT NULL CHECK (status IN ('pending','accepted','blocked')),
+    status          VARCHAR(20) NOT NULL CHECK (status IN ('pending','accepted')),
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(user_id, friend_id)
 );

@@ -1,31 +1,33 @@
 package main
 
 import (
+	"database/sql"
+	"ember/api/auth"
+	"ember/api/repositories"
+	"ember/api/router"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
-	"ember/api/handlers"
-	"ember/api/auth"
-	"database/sql"
-    "fmt"
 	"os"
+
 	"github.com/google/uuid"
-    _ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
 )
 
 func main() {
-	 // Load .env
-    if err := godotenv.Load(); err != nil {
-        log.Println("No .env file found, using environment variables")
-    }
+	// Load .env
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, using environment variables")
+	}
 
 	dsn := fmt.Sprintf(
 		"postgres://%s:%s@%s:%s/%s",
-		os.Getenv("DB_USER"), 
-		os.Getenv("DB_PASSWORD"), 
-		os.Getenv("DB_HOST"), 
-		os.Getenv("DB_PORT"), 
+		os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"),
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_PORT"),
 		os.Getenv("DB_NAME"),
 	)
 
@@ -42,13 +44,15 @@ func main() {
 
 	fmt.Println("Successfully connected to PostgreSQL!")
 
-	//JWT test
-	id := uuid.New()
-	token, err := auth.GenerateJWT(id)
-	uuid, err := auth.ValidateJWT(token)
-	if id == uuid {
-		log.Println("jwt works")
-	}
+	// id1
+	id, err := uuid.Parse("56e6af3d-eabf-41e6-b88c-9c122f72b9cd")
+	jwt, err := auth.GenerateJWT(id)
+	log.Println(jwt)
+
+	// id2
+	id, err = uuid.Parse("becf5685-4771-425f-80be-f8c0da7c3fef")
+	jwt, err = auth.GenerateJWT(id)
+	log.Println(jwt)
 
 	// Test endpoint
 	http.HandleFunc("/hello", func(w http.ResponseWriter, r *http.Request) {
@@ -58,12 +62,8 @@ func main() {
 		})
 	})
 
-	http.HandleFunc("/auth/register", handlers.RegisterHandler(db))
-	http.HandleFunc("/auth/login", handlers.LoginHandler(db))
-	// http.HandleFunc("/me", handlers.MeHandler)
-	// http.HandleFunc("/me/friends", handlers.FriendsHandler)
-	// http.HandleFunc("/pins", handlers.PinsHandler)
+	userRepo := repositories.NewUserRepository(db)
 
 	log.Println("Server running on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(":8080", router.CreateRouter(userRepo)))
 }

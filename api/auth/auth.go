@@ -7,6 +7,9 @@ import (
     jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"os"
+	"net/http"
+	"strings"
+	"context"
 )
 
 var jwtSecret = []byte(os.Getenv("DB_USER"))
@@ -45,3 +48,35 @@ func ValidateJWT(tokenString string) (uuid.UUID, error) {
 
     return uuid.Nil, fmt.Errorf("invalid claims")
 }
+
+func AuthMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Get the Authorization header
+        authHeader := r.Header.Get("Authorization")
+        if authHeader == "" {
+            http.Error(w, "missing Authorization header", http.StatusUnauthorized)
+            return
+        }
+
+        // Expect format: "Bearer <token>"
+        parts := strings.SplitN(authHeader, " ", 2)
+        if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+            http.Error(w, "invalid Authorization header format", http.StatusUnauthorized)
+            return
+        }
+
+        token := parts[1] // this is the JWT token
+
+        // You can now validate token
+        userID, err := ValidateJWT(token)
+        if err != nil {
+            http.Error(w, "invalid token", http.StatusUnauthorized)
+            return
+        }
+
+        // Store userID in context
+        ctx := context.WithValue(r.Context(), "userID", userID)
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+

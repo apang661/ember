@@ -1,20 +1,22 @@
 package handlers
 
 import (
-	"encoding/json"
-	"net/http"
 	"database/sql"
+	"encoding/json"
 	"log"
+	"net/http"
+
 	"golang.org/x/crypto/bcrypt"
 
+	"ember/api/auth"
 	"ember/api/dtos"
 	"ember/api/repositories"
-	"ember/api/auth"
+
 	"github.com/google/uuid"
 )
 
 // POST /auth/register
-func RegisterHandler(db *sql.DB) http.HandlerFunc {
+func PostRegisterHandler(userRepo repositories.UserRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req dtos.RegisterRequest
 
@@ -30,7 +32,7 @@ func RegisterHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "unable to hash", http.StatusBadRequest)
 		}
 
-		id, err = repositories.CreateUser(db, req.Username, req.Email, string(hash))
+		id, err = userRepo.CreateUser(req.Username, req.Email, string(hash))
 		if err != nil {
 			log.Println(err)
 			http.Error(w, "unable to create user", http.StatusBadRequest)
@@ -48,7 +50,7 @@ func RegisterHandler(db *sql.DB) http.HandlerFunc {
 }
 
 // POST /auth/login
-func LoginHandler(db *sql.DB) http.HandlerFunc {
+func PostLoginHandler(userRepo repositories.UserRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req dtos.LoginRequest
 
@@ -58,7 +60,7 @@ func LoginHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Fetch user uuid and user password from DB
-		id, hash, err := repositories.GetPasswordHashByEmail(db, req.Email)
+		id, hash, err := userRepo.GetPasswordHashByEmail(req.Email)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				http.Error(w, "invalid credentials", http.StatusUnauthorized)
@@ -84,7 +86,7 @@ func LoginHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Return success response with a mock token
-		resp := dtos.AuthResponse{
+		resp := dtos.LoginResponse{
 			Token: jwt,
 		}
 

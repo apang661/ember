@@ -28,3 +28,6 @@ Pods/
 **/fastlane/Preview.html
 **/fastlane/screenshots
 **/fastlane/test_output.
+
+**/.env
+**/go.sum
