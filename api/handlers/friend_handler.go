@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"ember/api/dtos"
@@ -12,38 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// GET /me
-func GetMeHandler(userRepo repositories.UserRepository) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Get user id from context
-		userID := r.Context().Value("userID").(uuid.UUID)
-
-		user, err := userRepo.GetUserByUUID(userID)
-		if err != nil {
-			log.Println(err)
-			http.Error(w, "Unable to retrieve user data", http.StatusInternalServerError)
-			return
-		}
-
-		resp := dtos.GetMeResponse{
-			ID:        user.ID,
-			Username:  user.Username,
-			CreatedAt: user.CreatedAt,
-			UpdatedAt: user.UpdatedAt,
-		}
-
-		if user.DisplayName.Valid {
-			resp.DisplayName = user.DisplayName.String
-		}
-
-		if user.Bio.Valid {
-			resp.Bio = user.Bio.String
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}
-}
+// --- FRIENDS ---
 
 // GET /friends
 func GetFriendsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
@@ -81,8 +51,37 @@ func GetFriendsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
 	}
 }
 
-// POST /friends/{friendID}
-func PostFriendsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
+// DELETE /friends/{friendID}
+func DeleteFriendsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := r.Context().Value("userID").(uuid.UUID)
+
+		friendIDStr := chi.URLParam(r, "friendID")
+		friendID, err := uuid.Parse(friendIDStr)
+		if err != nil {
+			http.Error(w, "invalid friend ID", http.StatusBadRequest)
+			return
+		}
+
+		success, err := userRepo.DeleteFriend(userID, friendID)
+		if err != nil {
+			http.Error(w, "unable to delete friend", http.StatusInternalServerError)
+			return
+		}
+
+		if !success {
+			http.Error(w, "friend does not exist", http.StatusBadRequest)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// --- FRIEND REQUESTS ---
+
+// POST /friends/requests/{friendID}
+func PostFriendRequestsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := r.Context().Value("userID").(uuid.UUID)
 
@@ -100,12 +99,17 @@ func PostFriendsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
 
 		success, err := userRepo.CreateFriendRequest(userID, friendID)
 		if err != nil {
+			if errors.Is(err, repositories.ErrTargetUserNotFound) {
+				http.Error(w, "target user does not exist", http.StatusBadRequest)
+				return
+			}
+			log.Printf("Error creating friend request from %s to %s: %v", userID, friendID, err)
 			http.Error(w, "unable to send friend request", http.StatusInternalServerError)
 			return
 		}
 
 		if !success {
-			http.Error(w, "either target does not exist or friendship already exists/pending", http.StatusBadRequest)
+			http.Error(w, "friendship already exists or is pending", http.StatusBadRequest)
 			return
 		}
 
@@ -113,8 +117,54 @@ func PostFriendsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
 	}
 }
 
-// PUT /friends/{friendID}
-func PutFriendsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
+// GET /friends/requests
+func GetFriendRequestsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := r.Context().Value("userID").(uuid.UUID)
+
+		// Query database for friends information
+		incomingList, outgoingList, err := userRepo.GetFriendRequestsByUUID(userID)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Unable to query friend requests data", http.StatusInternalServerError)
+		}
+
+		var resp dtos.GetFriendRequestsResponse
+		resp.Incoming = []dtos.FriendRequest{}
+		resp.Outgoing = []dtos.FriendRequest{}
+		for _, v := range incomingList {
+			request := dtos.FriendRequest{
+				ID:       v.ID,
+				Username: v.Username,
+			}
+
+			if v.DisplayName.Valid {
+				request.DisplayName = v.DisplayName.String
+			}
+
+			resp.Incoming = append(resp.Incoming, request)
+		}
+
+		for _, v := range outgoingList {
+			request := dtos.FriendRequest{
+				ID:       v.ID,
+				Username: v.Username,
+			}
+
+			if v.DisplayName.Valid {
+				request.DisplayName = v.DisplayName.String
+			}
+
+			resp.Outgoing = append(resp.Outgoing, request)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}
+}
+
+// PATCH /friends/requests/{friendID}
+func PatchFriendRequestsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := r.Context().Value("userID").(uuid.UUID)
 
@@ -125,7 +175,7 @@ func PutFriendsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
 			return
 		}
 
-		var req dtos.PutFriendsRequest
+		var req dtos.PatchFriendRequestsRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
 			return
@@ -165,33 +215,6 @@ func PutFriendsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
 		}
 
 		// Success
-		w.WriteHeader(http.StatusOK)
-	}
-}
-
-// DELETE /friends/{friendID}
-func DeleteFriendsHandler(userRepo repositories.UserRepository) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		userID := r.Context().Value("userID").(uuid.UUID)
-
-		friendIDStr := chi.URLParam(r, "friendID")
-		friendID, err := uuid.Parse(friendIDStr)
-		if err != nil {
-			http.Error(w, "invalid friend ID", http.StatusBadRequest)
-			return
-		}
-
-		success, err := userRepo.DeleteFriend(userID, friendID)
-		if err != nil {
-			http.Error(w, "unable to delete friend", http.StatusInternalServerError)
-			return
-		}
-
-		if !success {
-			http.Error(w, "friend does not exist", http.StatusBadRequest)
-			return
-		}
-
 		w.WriteHeader(http.StatusOK)
 	}
 }

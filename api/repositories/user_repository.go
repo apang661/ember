@@ -4,7 +4,13 @@ import (
 	"ember/api/models"
 
 	"database/sql"
+	"errors"
 	"github.com/google/uuid"
+)
+
+var (
+	ErrRequesterUserNotFound = errors.New("requesting user does not exist")
+	ErrTargetUserNotFound    = errors.New("target user does not exist")
 )
 
 // interface
@@ -13,6 +19,7 @@ type UserRepository interface {
 	GetUserByUUID(id uuid.UUID) (*models.User, error)
 	GetPasswordHashByEmail(email string) (uuid.UUID, string, error)
 	GetFriendsByUUID(id uuid.UUID) ([]models.User, error)
+	GetFriendRequestsByUUID(id uuid.UUID) ([]models.User, []models.User, error)
 	CreateFriendRequest(userID uuid.UUID, friendID uuid.UUID) (bool, error)
 	AcceptFriendRequest(userID uuid.UUID, requesterID uuid.UUID) (bool, error)
 	RejectFriendRequest(userID uuid.UUID, requesterID uuid.UUID) (bool, error)
@@ -115,22 +122,104 @@ func (ur *userRepository) GetPasswordHashByEmail(email string) (uuid.UUID, strin
 	return id, passwordHash, nil
 }
 
+func (ur *userRepository) GetFriendRequestsByUUID(id uuid.UUID) ([]models.User, []models.User, error) {
+	var incoming []models.User
+	var outgoing []models.User
+
+	rows, err := ur.db.Query(
+		`SELECT uuid, username, display_name 
+		 FROM users WHERE id IN
+			(SELECT user_id
+			FROM friendships WHERE status = 'pending' AND friend_id = 
+				(SELECT id FROM USERS WHERE uuid = $1))`,
+		id,
+	)
+	if err != nil {
+		return incoming, outgoing, err
+	}
+	defer rows.Close()
+	
+	for rows.Next() {
+		var user models.User
+		rows.Scan(
+			&user.ID,
+			&user.Username,
+			&user.DisplayName,
+		)
+		incoming = append(incoming, user)
+	}
+
+	if err = rows.Err(); err != nil {
+		return incoming, outgoing, err
+	}
+
+	rowsOut, err := ur.db.Query(
+		`SELECT uuid, username, display_name 
+		 FROM users WHERE id IN
+			(SELECT friend_id
+			FROM friendships WHERE status = 'pending' AND user_id = 
+				(SELECT id FROM USERS WHERE uuid = $1))`,
+		id,
+	)
+	if err != nil {
+		return incoming, outgoing, err
+	}
+	defer rowsOut.Close()
+
+	for rowsOut.Next() {
+		var user models.User
+		rowsOut.Scan(
+			&user.ID,
+			&user.Username,
+			&user.DisplayName,
+		)
+		outgoing = append(outgoing, user)
+	}
+
+	if err = rowsOut.Err(); err != nil {
+		return incoming, outgoing, err
+	}
+
+	return incoming, outgoing, nil
+}
+
 func (ur *userRepository) CreateFriendRequest(userID uuid.UUID, friendID uuid.UUID) (bool, error) {
+	var requesterDBID int64
+	if err := ur.db.QueryRow(
+		"SELECT id FROM users WHERE uuid = $1",
+		userID,
+	).Scan(&requesterDBID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrRequesterUserNotFound
+		}
+		return false, err
+	}
+
+	var friendDBID int64
+	if err := ur.db.QueryRow(
+		"SELECT id FROM users WHERE uuid = $1",
+		friendID,
+	).Scan(&friendDBID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrTargetUserNotFound
+		}
+		return false, err
+	}
+
 	query := `
 		INSERT INTO friendships (user_id, friend_id, status)
-		SELECT 
-			(SELECT id FROM users WHERE uuid = $1),
-			(SELECT id FROM users WHERE uuid = $2),
-			'pending'
+		SELECT $1, $2, 'pending'
 		WHERE NOT EXISTS (
 			SELECT 1 FROM friendships
-			WHERE user_id = (SELECT id FROM users WHERE uuid = $1)
-				AND friend_id = (SELECT id FROM users WHERE uuid = $2)
-			AND status IN ('pending', 'accepted')
+			WHERE status IN ('pending', 'accepted')
+				AND (
+					(user_id = $1 AND friend_id = $2) OR
+					(user_id = $2 AND friend_id = $1)
+				)
 		);
 	`
 
-	result, err := ur.db.Exec(query, userID.String(), friendID.String())
+	result, err := ur.db.Exec(query, requesterDBID, friendDBID)
 	if err != nil {
 		return false, err
 	}
@@ -177,7 +266,6 @@ func (ur *userRepository) AcceptFriendRequest(userID, requesterID uuid.UUID) (bo
 	if rowsAffected == 0 {
 		return false, nil // no pending request to accept
 	}
-
 
 	// Delete any reverse pending request (user → requester)
 	deleteQuery := `
@@ -264,5 +352,3 @@ func (ur *userRepository) DeleteFriend(userID uuid.UUID, friendID uuid.UUID) (bo
 
 	return true, nil
 }
-
-

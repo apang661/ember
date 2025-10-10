@@ -21,9 +21,12 @@ func CreateRouter(userRepo repositories.UserRepository) chi.Router {
 		r.Get("/me", handlers.GetMeHandler(userRepo))
 		r.Route("/friends", func(r chi.Router) {
 			r.Get("/", handlers.GetFriendsHandler(userRepo))
-			r.Put("/{friendID}", handlers.PutFriendsHandler(userRepo))
-			r.Post("/{friendID}", handlers.PostFriendsHandler(userRepo))
 			r.Delete("/{friendID}", handlers.DeleteFriendsHandler(userRepo))
+			r.Route("/requests", func(r chi.Router) {
+				r.Get("/", handlers.GetFriendRequestsHandler(userRepo))
+				r.Post("/{friendID}", handlers.PostFriendRequestsHandler(userRepo))
+				r.Patch("/{friendID}", handlers.PatchFriendRequestsHandler(userRepo))
+			})
 		})
 	})
 
