@@ -15,6 +15,7 @@ struct MapView: View {
     // Camera + location
     @State private var position: MapCameraPosition = .automatic
     @StateObject private var locationManager = LocationManager()
+    @StateObject private var newsStore = MapNewsStore()
 
     // Pins state
     @State private var pins: [EmojiPin] = []
@@ -48,192 +49,101 @@ struct MapView: View {
     @State private var friendPins: [EmojiPin] = []
     @State private var selectedFriendPin: EmojiPin?
     @State private var showSettings: Bool = false
+    @State private var showNewsDrawer: Bool = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Map(position: $position) {
-                // Custom overlays only; hide system user annotation to avoid dark fill artifacts
+            mapCanvas
 
-                // Emoji pins within selected radius
-                ForEach(filteredPins) { pin in
-                    Annotation("", coordinate: pin.coordinate) {
-                        EmojiBadge(emoji: pin.emoji)
-                    }
-                }
-
-                // Active fake-pin popouts (Everyone scope only)
-                if scope == .everyone {
-                    ForEach(activeFakePins) { pin in
-                        Annotation("", coordinate: pin.coordinate) {
-                            PopEmojiBadge(emoji: pin.emoji) {
-                                activePopups.remove(pin.id)
+            VStack(spacing: 18) {
+                newsDrawer
+                GlassSurface {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack {
+                            Label("Drop your vibe", systemImage: "sparkles")
+                                .font(.callout.weight(.semibold))
+                                .labelStyle(.titleAndIcon)
+                                .foregroundStyle(.primary.opacity(0.85))
+                            Spacer()
+                            if let coord = locationManager.location?.coordinate {
+                                Text(formatLocation(coord))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
-                    }
-                }
 
-                // Static friends pins (Friends scope only)
-                if scope == .friends {
-                    ForEach(filteredFriendPins) { pin in
-                        Annotation("friend-\(pin.id)", coordinate: pin.coordinate) {
-                            Button {
-                                selectedFriendPin = pin
-                            } label: {
-                                EmojiBadge(emoji: pin.emoji)
+                        HStack(spacing: 14) {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 12) {
+                                    ForEach(allEmojis, id: \.self) { e in
+                                        Button {
+                                            selectedEmoji = e
+                                        } label: {
+                                            Text(e)
+                                                .font(.system(size: 24))
+                                                .frame(width: 48, height: 48)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                        .fill(emojiBackground(for: e))
+                                                )
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                        .stroke(emojiStroke(for: e), lineWidth: selectedEmoji == e ? 1.6 : 1)
+                                                )
+                                                .shadow(color: selectedEmoji == e ? Color.accentColor.opacity(0.22) : Color.black.opacity(0.08), radius: selectedEmoji == e ? 12 : 6, x: 0, y: selectedEmoji == e ? 10 : 4)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+
+                            Button(action: placeSelectedEmoji) {
+                                HStack(spacing: 8) {
+                                    Text(selectedEmoji)
+                                        .font(.system(size: 24))
+                                    Text("Drop")
+                                        .font(.callout.weight(.semibold))
+                                }
+                                .padding(.vertical, 11)
+                                .padding(.horizontal, 18)
+                                .background(
+                                    Capsule(style: .continuous)
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [Color.accentColor, Color.pink.opacity(0.85)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                )
+                                .foregroundStyle(Color.white)
+                                .shadow(color: Color.accentColor.opacity(0.28), radius: 18, x: 0, y: 10)
                             }
                             .buttonStyle(.plain)
+                            .disabled(locationManager.location == nil)
+                            .opacity(locationManager.location == nil ? 0.45 : 1)
+                            .accessibilityLabel("Drop selected emoji on your current location")
                         }
-                    }
-                }
 
-                // Preview of selected emoji at user location before placing
-                if let userCoord = locationManager.location?.coordinate {
-                    Annotation("Me", coordinate: userCoord) {
-                        PreviewEmojiBadge(emoji: selectedEmoji)
-                    }
-                }
-            }
-            .onMapCameraChange(frequency: .continuous) { context in
-                currentRegion = context.region
-            }
-            // Custom SwiftUI overlay that draws a red filled pulse in screen space
-            .overlay {
-                GeometryReader { geo in
-                    if scope == .everyone, let region = currentRegion, let userCoord = locationManager.location?.coordinate {
-                        let centerPoint = pointOnScreen(for: userCoord, in: region, size: geo.size)
-                        let currentMeters = max(50, pulseRadiusMeters)
-                        // Clamp pixel radius to avoid huge GPU resources (fixes 'resource exceeds maximum size')
-                        let rawPixelRadius = pixels(forMeters: currentMeters, atLatitude: userCoord.latitude, in: region, size: geo.size)
-                        let pixelRadius = min(rawPixelRadius, 600) // cap to 600px
-                        let targetMeters = max(50, radiusKm * 1000.0)
-                        let progress = min(max(currentMeters / targetMeters, 0.0), 1.0)
-                        let fadeStart: CGFloat = 0.995 // fade only when extremely close to the edge
-                        let fade: CGFloat = progress < fadeStart ? 1.0 : max(0.0, 1.0 - (CGFloat(progress) - fadeStart) / (1.0 - fadeStart))
+                        Divider()
 
-                        ZStack {
-                            // Base translucent red fill to avoid dark/black appearance
-                            Circle()
-                                .fill(Color.red.opacity(0.22 * fade))
-                                .frame(width: pixelRadius * 2, height: pixelRadius * 2)
-                                .position(x: centerPoint.x, y: centerPoint.y)
-
-                            // Radial gradient on top to create a soft sonar effect
-                            Circle()
-                                .fill(
-                                    RadialGradient(
-                                        colors: [Color.red.opacity(0.45 * fade), Color.red.opacity(0.05 * fade)],
-                                        center: .center,
-                                        startRadius: 0,
-                                        endRadius: max(120, pixelRadius)
-                                    )
-                                )
-                                .blendMode(.screen)
-                                .frame(width: pixelRadius * 2, height: pixelRadius * 2)
-                                .position(x: centerPoint.x, y: centerPoint.y)
-
-                            Circle()
-                                .stroke(Color.red.opacity(0.9 * fade), lineWidth: 3)
-                                .frame(width: pixelRadius * 2, height: pixelRadius * 2)
-                                .position(x: centerPoint.x, y: centerPoint.y)
-                        }
-                        .compositingGroup()
-                        .opacity(Double(fade))
-                        .allowsHitTesting(false)
-                    }
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                Button(action: recenterOnUser) {
-                    Image(systemName: "location.fill")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.primary)
-                        .padding(10)
-                        .background(.ultraThinMaterial, in: Circle())
-                        .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
-                }
-                .padding(.trailing, 12)
-                .padding(.top, 56)
-            }
-            
-            // Scope picker overlay at top
-            .overlay(alignment: .top) {
-                HStack {
-                    Picker("Scope", selection: $scope) {
-                        ForEach(Scope.allCases) { s in
-                            Text(s.label).tag(s)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-                .padding(.horizontal)
-                .padding(.top, 10)
-            }
-            // Settings button overlay at top-leading
-            .overlay(alignment: .topLeading) {
-                Button {
-                    showSettings = true
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.primary)
-                        .padding(10)
-                        .background(.ultraThinMaterial, in: Circle())
-                        .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
-                }
-                .padding(.leading, 12)
-                .padding(.top, 56)
-            }
-
-            // Controls overlay
-            VStack(spacing: 12) {
-                // Emoji slider: scroll right to reveal more categories
-                HStack(alignment: .center, spacing: 10) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(allEmojis, id: \.self) { e in
-                                Button {
-                                    selectedEmoji = e
-                                } label: {
-                                    Text(e)
-                                        .font(.system(size: 22))
-                                        .frame(width: 44, height: 44)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                                .fill(selectedEmoji == e ? Color.accentColor.opacity(0.18) : Color(.secondarySystemBackground))
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                                .stroke(selectedEmoji == e ? Color.accentColor : Color.gray.opacity(0.25), lineWidth: selectedEmoji == e ? 1.5 : 1)
-                                        )
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Discovery radius")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Picker("Radius", selection: $radiusKm) {
+                                ForEach(radiusOptions, id: \.self) { r in
+                                    Text("\(Int(r)) km").tag(r)
                                 }
-                                .buttonStyle(.plain)
                             }
+                            .pickerStyle(.segmented)
                         }
-                        .padding(.vertical, 2)
-                    }
-                    Button(action: placeSelectedEmoji) {
-                        HStack(spacing: 6) {
-                            Text(selectedEmoji)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(locationManager.location == nil)
-                }
-
-                // Radius selection
-                Picker("Radius", selection: $radiusKm) {
-                    ForEach(radiusOptions, id: \.self) { r in
-                        Text("\(Int(r)) km").tag(r)
                     }
                 }
-                .pickerStyle(.segmented)
             }
-            .padding()
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 6)
-            .padding()
+            .padding(.horizontal, 20)
+            .padding(.bottom, 28)
         }
         .onAppear {
             // Request location authorization and load any saved pins
@@ -246,6 +156,9 @@ struct MapView: View {
             // Center/adjust camera when we get a fix
             guard let c = newValue?.coordinate else { return }
             updateCamera(center: c, radiusKm: radiusKm, animated: true)
+            if showNewsDrawer {
+                refreshNewsForDrawer()
+            }
             #if DEBUG
             if FakePins.enabled {
                 fakePins = FakePins.seed(around: c, forRadiusKm: radiusKm)
@@ -275,11 +188,19 @@ struct MapView: View {
                 friendPins = FakePins.seedFriends(around: c, forRadiusKm: newRadius)
             }
             #endif
+            if showNewsDrawer {
+                refreshNewsForDrawer(force: true)
+            }
             triggerPulse()
         }
         // Removed onChange(of: position) to avoid pattern matching on MapCameraPosition
         .onChange(of: pins) { _, newPins in
             PinsStore.save(newPins)
+        }
+        .onChange(of: showNewsDrawer) { _, isOpen in
+            if isOpen {
+                refreshNewsForDrawer(force: true)
+            }
         }
         .alert("Location Unavailable", isPresented: $showLocationAlert) {
             Button("OK", role: .cancel) {}
@@ -323,6 +244,242 @@ struct MapView: View {
         return friendPins.filter { pin in
             distanceMeters(userCoord, pin.coordinate) <= limitMeters
         }
+    }
+
+    private var mapCanvas: some View {
+        let baseMap = Map(position: $position) {
+            // Emoji pins within selected radius
+            ForEach(filteredPins) { pin in
+                Annotation("", coordinate: pin.coordinate) {
+                    EmojiBadge(emoji: pin.emoji)
+                }
+            }
+
+            // Active fake-pin popouts (Everyone scope only)
+            if scope == .everyone {
+                ForEach(activeFakePins) { pin in
+                    Annotation("", coordinate: pin.coordinate) {
+                        PopEmojiBadge(emoji: pin.emoji) {
+                            activePopups.remove(pin.id)
+                        }
+                    }
+                }
+            }
+
+            // Static friends pins (Friends scope only)
+            if scope == .friends {
+                ForEach(filteredFriendPins) { pin in
+                    Annotation("friend-\(pin.id)", coordinate: pin.coordinate) {
+                        Button {
+                            selectedFriendPin = pin
+                        } label: {
+                            EmojiBadge(emoji: pin.emoji)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            // Preview of selected emoji at user location before placing
+            if let userCoord = locationManager.location?.coordinate {
+                Annotation("Me", coordinate: userCoord) {
+                    PreviewEmojiBadge(emoji: selectedEmoji)
+                }
+            }
+        }
+
+        let styledMap: AnyView
+        if #available(iOS 17, *) {
+            styledMap = AnyView(
+                baseMap
+                    .mapStyle(.standard(elevation: .realistic))
+                    .mapControls {
+                        MapCompass()
+                        MapPitchToggle()
+                    }
+            )
+        } else {
+            styledMap = AnyView(baseMap)
+        }
+
+        return styledMap
+            .ignoresSafeArea()
+            .onMapCameraChange(frequency: .continuous) { context in
+                currentRegion = context.region
+                if showNewsDrawer {
+                    refreshNewsForDrawer()
+                }
+            }
+            .overlay(alignment: Alignment.top) { topGradientOverlay }
+            .overlay(alignment: Alignment.bottom) { bottomGradientOverlay }
+            .overlay { pulseOverlay }
+            .overlay(alignment: Alignment.top) { topChrome }
+    }
+
+    @ViewBuilder
+    private var topGradientOverlay: some View {
+        LinearGradient(
+            colors: [Color.black.opacity(0.28), Color.black.opacity(0.0)],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: 190)
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .blendMode(.plusLighter)
+    }
+
+    @ViewBuilder
+    private var bottomGradientOverlay: some View {
+        LinearGradient(
+            colors: [Color.white.opacity(0.18), Color.white.opacity(0.0)],
+            startPoint: .bottom,
+            endPoint: .top
+        )
+        .frame(height: 220)
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .blendMode(.plusLighter)
+    }
+
+    @ViewBuilder
+    private var pulseOverlay: some View {
+        GeometryReader { geo in
+            if scope == .everyone, let region = currentRegion, let userCoord = locationManager.location?.coordinate {
+                let centerPoint = pointOnScreen(for: userCoord, in: region, size: geo.size)
+                let currentMeters = max(50, pulseRadiusMeters)
+                let rawPixelRadius = pixels(forMeters: currentMeters, atLatitude: userCoord.latitude, in: region, size: geo.size)
+                let pixelRadius = min(rawPixelRadius, 600)
+                let targetMeters = max(50, radiusKm * 1000.0)
+                let progress = min(max(currentMeters / targetMeters, 0.0), 1.0)
+                let fadeStart: CGFloat = 0.995
+                let fade: CGFloat = progress < fadeStart ? 1.0 : max(0.0, 1.0 - (CGFloat(progress) - fadeStart) / (1.0 - fadeStart))
+
+                ZStack {
+                    Circle()
+                        .fill(Color.red.opacity(0.22 * fade))
+                        .frame(width: pixelRadius * 2, height: pixelRadius * 2)
+                        .position(x: centerPoint.x, y: centerPoint.y)
+
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color.red.opacity(0.45 * fade), Color.red.opacity(0.05 * fade)],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: max(120, pixelRadius)
+                            )
+                        )
+                        .blendMode(.screen)
+                        .frame(width: pixelRadius * 2, height: pixelRadius * 2)
+                        .position(x: centerPoint.x, y: centerPoint.y)
+
+                    Circle()
+                        .stroke(Color.red.opacity(0.9 * fade), lineWidth: 3)
+                        .frame(width: pixelRadius * 2, height: pixelRadius * 2)
+                        .position(x: centerPoint.x, y: centerPoint.y)
+                }
+                .compositingGroup()
+                .opacity(Double(fade))
+                .allowsHitTesting(false)
+            }
+        }
+    }
+
+    private var recenterButton: some View {
+        FloatingMapButton(systemName: "location.fill", action: recenterOnUser)
+    }
+
+    private var scopePicker: some View {
+        GlassSurface(style: .compact) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Now viewing")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Picker("Scope", selection: $scope) {
+                    ForEach(Scope.allCases) { s in
+                        Text(s.label).tag(s)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 220)
+            }
+        }
+    }
+
+    private var settingsButton: some View {
+        FloatingMapButton(systemName: "gearshape.fill") {
+            showSettings = true
+        }
+    }
+
+    private var topChrome: some View {
+        HStack(alignment: .center, spacing: 16) {
+            settingsButton
+            Spacer(minLength: 0)
+            scopePicker
+                .padding(.horizontal, 4)
+            Spacer(minLength: 0)
+            recenterButton
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 5)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private var newsDrawer: some View {
+        if showNewsDrawer {
+            MapNewsDeck(
+                store: newsStore,
+                openInMaps: openNewsItem,
+                onClose: {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                        showNewsDrawer = false
+                    }
+                },
+                onRefresh: { refreshNewsForDrawer(force: true) }
+            )
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else {
+            collapsedNewsHandle
+                .transition(.opacity)
+        }
+    }
+
+    private var collapsedNewsHandle: some View {
+        GlassSurface(style: .compact) {
+            HStack(spacing: 12) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.22))
+                    .frame(width: 40, height: 4)
+                Text("Local pulse")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 16, weight: .semibold))
+            }
+        }
+        .onTapGesture {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                showNewsDrawer = true
+            }
+        }
+        .gesture(
+            DragGesture().onEnded { value in
+                if value.translation.height < -60 {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                        showNewsDrawer = true
+                    }
+                }
+            }
+        )
+    }
+
+    private func refreshNewsForDrawer(force: Bool = false) {
+        guard let anchor = currentRegion?.center ?? locationManager.location?.coordinate else { return }
+        newsStore.refresh(around: anchor, force: force)
     }
 
     private func pinCurrentLocation(emoji: String, visibility: Visibility? = nil, note: String? = nil) {
@@ -415,5 +572,36 @@ struct MapView: View {
 
     private var activeFakePins: [EmojiPin] {
         fakePins.filter { activePopups.contains($0.id) }
+    }
+
+    private func formatLocation(_ coordinate: CLLocationCoordinate2D) -> String {
+        let lat = String(format: "%@%.3f°", coordinate.latitude >= 0 ? "N" : "S", abs(coordinate.latitude))
+        let lon = String(format: "%@%.3f°", coordinate.longitude >= 0 ? "E" : "W", abs(coordinate.longitude))
+        return "\(lat) · \(lon)"
+    }
+
+    private func emojiBackground(for emoji: String) -> AnyShapeStyle {
+        if selectedEmoji == emoji {
+            let gradient = LinearGradient(
+                colors: [Color.accentColor.opacity(0.92), Color.pink.opacity(0.7)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            return AnyShapeStyle(gradient)
+        } else {
+            let base = Color(.systemBackground).opacity(0.92)
+            return AnyShapeStyle(base)
+        }
+    }
+
+    private func emojiStroke(for emoji: String) -> Color {
+        selectedEmoji == emoji ? Color.white.opacity(0.65) : Color.gray.opacity(0.26)
+    }
+
+    private func openNewsItem(_ item: MapNewsItem) {
+        var launchOptions: [String: Any] = [:]
+        launchOptions[MKLaunchOptionsMapCenterKey] = NSValue(mkCoordinate: item.coordinate)
+        launchOptions[MKLaunchOptionsMapSpanKey] = NSValue(mkCoordinateSpan: MKCoordinateSpan(latitudeDelta: 0.12, longitudeDelta: 0.12))
+        item.mapItem.openInMaps(launchOptions: launchOptions)
     }
 }
