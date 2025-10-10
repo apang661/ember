@@ -30,4 +30,3 @@ Pods/
 **/fastlane/test_output.
 
 **/.env
-**/go.sum
