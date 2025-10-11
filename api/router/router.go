@@ -11,8 +11,8 @@ import (
     "github.com/go-chi/chi/v5"
 )
 
-func CreateRouter(userRepo repositories.UserRepository) chi.Router {
-    r := chi.NewRouter()
+func CreateRouter(userRepo repositories.UserRepository, pinRepo repositories.PinRepository) chi.Router {
+	r := chi.NewRouter()
 
     // Simple health/test endpoint
     r.Get("/hello", func(w http.ResponseWriter, _ *http.Request) {
@@ -36,6 +36,12 @@ func CreateRouter(userRepo repositories.UserRepository) chi.Router {
 				r.Post("/{friendID}", handlers.PostFriendRequestsHandler(userRepo))
 				r.Patch("/{friendID}", handlers.PatchFriendRequestsHandler(userRepo))
 			})
+		})
+		r.Route("/pins", func(r chi.Router) {
+			r.Post("/", handlers.PostPinsHandler(pinRepo))
+			r.Get("/me", handlers.GetPinsMeHandler(pinRepo))
+			r.Get("/nearby", handlers.GetPinsNearbyHandler(pinRepo))
+			r.Get("/friends", handlers.GetPinsFriendsHandler(pinRepo))
 		})
 	})
 

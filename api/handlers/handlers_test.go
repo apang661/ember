@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -94,6 +95,41 @@ func (m *mockUserRepo) DeleteFriend(userID uuid.UUID, friendID uuid.UUID) (bool,
 		return m.deleteFriendFn(userID, friendID)
 	}
 	return false, nil
+}
+
+type mockPinRepo struct {
+	createPinFn       func(userID uuid.UUID, emotion string, message string, lon float64, lat float64, visibility string) error
+	queryNearbyPinsFn func(userID uuid.UUID, lon float64, lat float64, radiusKm float64) ([]models.Pin, error)
+	queryFriendPinsFn func(userID uuid.UUID) ([]models.Pin, error)
+	queryUserPinsFn   func(userID uuid.UUID) ([]models.Pin, error)
+}
+
+func (m *mockPinRepo) CreatePin(userID uuid.UUID, emotion string, message string, lon float64, lat float64, visibility string) error {
+	if m.createPinFn != nil {
+		return m.createPinFn(userID, emotion, message, lon, lat, visibility)
+	}
+	return nil
+}
+
+func (m *mockPinRepo) QueryNearbyPins(userID uuid.UUID, lon float64, lat float64, radiusKm float64) ([]models.Pin, error) {
+	if m.queryNearbyPinsFn != nil {
+		return m.queryNearbyPinsFn(userID, lon, lat, radiusKm)
+	}
+	return nil, nil
+}
+
+func (m *mockPinRepo) QueryFriendPins(userID uuid.UUID) ([]models.Pin, error) {
+	if m.queryFriendPinsFn != nil {
+		return m.queryFriendPinsFn(userID)
+	}
+	return nil, nil
+}
+
+func (m *mockPinRepo) QueryUserPins(userID uuid.UUID) ([]models.Pin, error) {
+	if m.queryUserPinsFn != nil {
+		return m.queryUserPinsFn(userID)
+	}
+	return nil, nil
 }
 
 func TestPostRegisterHandler_Success(t *testing.T) {
@@ -650,6 +686,318 @@ func TestPatchFriendRequestsHandler_InvalidBody(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestPostPinsHandler_Success(t *testing.T) {
+	userID := uuid.New()
+	var captured struct {
+		userID     uuid.UUID
+		emotion    string
+		message    string
+		longitude  float64
+		latitude   float64
+		visibility string
+	}
+
+	pinRepo := &mockPinRepo{
+		createPinFn: func(u uuid.UUID, emotion string, message string, lon float64, lat float64, visibility string) error {
+			captured = struct {
+				userID     uuid.UUID
+				emotion    string
+				message    string
+				longitude  float64
+				latitude   float64
+				visibility string
+			}{u, emotion, message, lon, lat, visibility}
+			return nil
+		},
+	}
+
+	body := `{"emotion":"happy","message":"Coffee is great","longitude":-123.12,"latitude":49.28,"visibility":"public"}`
+	req := httptest.NewRequest(http.MethodPost, "/pins", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(context.WithValue(req.Context(), "userID", userID))
+	rec := httptest.NewRecorder()
+
+	PostPinsHandler(pinRepo)(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d got %d", http.StatusCreated, rec.Code)
+	}
+
+	if captured.userID != userID || captured.emotion != "happy" || captured.message != "Coffee is great" {
+		t.Fatalf("unexpected captured values: %+v", captured)
+	}
+	if captured.longitude != -123.12 || captured.latitude != 49.28 || captured.visibility != "public" {
+		t.Fatalf("unexpected captured location/visibility: %+v", captured)
+	}
+}
+
+func TestPostPinsHandler_InvalidBody(t *testing.T) {
+	pinRepo := &mockPinRepo{}
+	req := httptest.NewRequest(http.MethodPost, "/pins", strings.NewReader(`bad`))
+	req = req.WithContext(context.WithValue(req.Context(), "userID", uuid.New()))
+	rec := httptest.NewRecorder()
+
+	PostPinsHandler(pinRepo)(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestGetPinsFriendsHandler_Success(t *testing.T) {
+	userID := uuid.New()
+	friendID := uuid.New()
+	now := time.Now().UTC()
+
+	pinRepo := &mockPinRepo{
+		queryFriendPinsFn: func(id uuid.UUID) ([]models.Pin, error) {
+			if id != userID {
+				t.Fatalf("unexpected user ID %s", id)
+			}
+			return []models.Pin{
+				{
+					UserID:  friendID,
+					Emotion: "happy",
+					Message: sql.NullString{String: "Hello", Valid: true},
+					Location: models.Location{
+						Latitude:  49.28,
+						Longitude: -123.12,
+					},
+					Visibility: "friends",
+					CreatedAt:  now,
+				},
+			}, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/pins/friends", nil)
+	req = req.WithContext(context.WithValue(req.Context(), "userID", userID))
+	rec := httptest.NewRecorder()
+
+	GetPinsFriendsHandler(pinRepo)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d got %d", http.StatusOK, rec.Code)
+	}
+
+	var resp dtos.GetPinListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(resp.Pins) != 1 {
+		t.Fatalf("expected one pin, got %d", len(resp.Pins))
+	}
+
+	got := resp.Pins[0]
+	if got.UserID != friendID || got.Emotion != "happy" || got.Message != "Hello" {
+		t.Fatalf("unexpected pin payload: %+v", got)
+	}
+	if got.Longitude != -123.12 || got.Latitude != 49.28 {
+		t.Fatalf("unexpected location: %+v", got)
+	}
+	if !got.CreatedAt.Equal(now) {
+		t.Fatalf("unexpected created_at: %v", got.CreatedAt)
+	}
+}
+
+func TestGetPinsFriendsHandler_Error(t *testing.T) {
+	pinRepo := &mockPinRepo{
+		queryFriendPinsFn: func(id uuid.UUID) ([]models.Pin, error) {
+			return nil, errors.New("boom")
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/pins/friends", nil)
+	req = req.WithContext(context.WithValue(req.Context(), "userID", uuid.New()))
+	rec := httptest.NewRecorder()
+
+	GetPinsFriendsHandler(pinRepo)(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d got %d", http.StatusInternalServerError, rec.Code)
+	}
+}
+
+func TestGetPinsMeHandler_Success(t *testing.T) {
+	userID := uuid.New()
+	now := time.Now().UTC()
+
+	pinRepo := &mockPinRepo{
+		queryUserPinsFn: func(id uuid.UUID) ([]models.Pin, error) {
+			if id != userID {
+				t.Fatalf("unexpected user ID %s", id)
+			}
+			return []models.Pin{
+				{
+					UserID:  userID,
+					Emotion: "excited",
+					Message: sql.NullString{String: "From me", Valid: true},
+					Location: models.Location{
+						Latitude:  49.27,
+						Longitude: -123.1,
+					},
+					Visibility: "public",
+					CreatedAt:  now,
+				},
+			}, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/pins/me", nil)
+	req = req.WithContext(context.WithValue(req.Context(), "userID", userID))
+	rec := httptest.NewRecorder()
+
+	GetPinsMeHandler(pinRepo)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d got %d", http.StatusOK, rec.Code)
+	}
+
+	var resp dtos.GetPinListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(resp.Pins) != 1 || resp.Pins[0].UserID != userID || resp.Pins[0].Emotion != "excited" {
+		t.Fatalf("unexpected pins payload: %+v", resp.Pins)
+	}
+}
+
+func TestGetPinsMeHandler_Error(t *testing.T) {
+	pinRepo := &mockPinRepo{
+		queryUserPinsFn: func(id uuid.UUID) ([]models.Pin, error) {
+			return nil, errors.New("boom")
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/pins/me", nil)
+	req = req.WithContext(context.WithValue(req.Context(), "userID", uuid.New()))
+	rec := httptest.NewRecorder()
+
+	GetPinsMeHandler(pinRepo)(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d got %d", http.StatusInternalServerError, rec.Code)
+	}
+}
+
+func TestGetPinsNearbyHandler_Success(t *testing.T) {
+	userID := uuid.New()
+	now := time.Now().UTC()
+	const (
+		longitude = -123.115
+		latitude  = 49.281
+		radiusKm  = 3.5
+	)
+
+	var captured struct {
+		userID    uuid.UUID
+		longitude float64
+		latitude  float64
+		radiusKm  float64
+	}
+
+	pinRepo := &mockPinRepo{
+		queryNearbyPinsFn: func(id uuid.UUID, lon float64, lat float64, radius float64) ([]models.Pin, error) {
+			captured = struct {
+				userID    uuid.UUID
+				longitude float64
+				latitude  float64
+				radiusKm  float64
+			}{id, lon, lat, radius}
+			return []models.Pin{
+				{
+					UserID:  uuid.New(),
+					Emotion: "curious",
+					Message: sql.NullString{String: "Checking this place", Valid: true},
+					Location: models.Location{
+						Latitude:  latitude,
+						Longitude: longitude,
+					},
+					Visibility: "public",
+					CreatedAt:  now,
+				},
+			}, nil
+		},
+	}
+
+	url := fmt.Sprintf("/pins/nearby?longitude=%f&latitude=%f&radius_km=%f", longitude, latitude, radiusKm)
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req = req.WithContext(context.WithValue(req.Context(), "userID", userID))
+	rec := httptest.NewRecorder()
+
+	GetPinsNearbyHandler(pinRepo)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d got %d", http.StatusOK, rec.Code)
+	}
+
+	if captured.userID != userID || captured.longitude != longitude || captured.latitude != latitude || captured.radiusKm != radiusKm {
+		t.Fatalf("unexpected captured values: %+v", captured)
+	}
+
+	var resp dtos.GetPinListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(resp.Pins) != 1 || resp.Pins[0].Emotion != "curious" || resp.Pins[0].Message != "Checking this place" {
+		t.Fatalf("unexpected pins payload: %+v", resp.Pins)
+	}
+}
+
+func TestGetPinsNearbyHandler_MissingParam(t *testing.T) {
+	pinRepo := &mockPinRepo{}
+	req := httptest.NewRequest(http.MethodGet, "/pins/nearby?longitude=1&latitude=2", nil)
+	req = req.WithContext(context.WithValue(req.Context(), "userID", uuid.New()))
+	rec := httptest.NewRecorder()
+
+	GetPinsNearbyHandler(pinRepo)(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestGetPinsNearbyHandler_InvalidRadius(t *testing.T) {
+	pinRepo := &mockPinRepo{}
+	req := httptest.NewRequest(http.MethodGet, "/pins/nearby?longitude=1&latitude=2&radius_km=-1", nil)
+	req = req.WithContext(context.WithValue(req.Context(), "userID", uuid.New()))
+	rec := httptest.NewRecorder()
+
+	GetPinsNearbyHandler(pinRepo)(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestGetPinsNearbyHandler_RadiusClamped(t *testing.T) {
+	userID := uuid.New()
+	var capturedRadius float64
+	pinRepo := &mockPinRepo{
+		queryNearbyPinsFn: func(id uuid.UUID, lon float64, lat float64, radius float64) ([]models.Pin, error) {
+			capturedRadius = radius
+			return nil, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/pins/nearby?longitude=1&latitude=2&radius_km=30", nil)
+	req = req.WithContext(context.WithValue(req.Context(), "userID", userID))
+	rec := httptest.NewRecorder()
+
+	GetPinsNearbyHandler(pinRepo)(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d got %d", http.StatusOK, rec.Code)
+	}
+
+	if capturedRadius != maxNearbyRadiusKm {
+		t.Fatalf("expected radius %f got %f", maxNearbyRadiusKm, capturedRadius)
 	}
 }
 

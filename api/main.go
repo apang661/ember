@@ -43,9 +43,10 @@ func main() {
 	})
 
     userRepo := repositories.NewUserRepository(db)
+	pinRepo := repositories.NewPinRepository(db)
 
-    log.Println("Server running on :8080")
-    log.Fatal(http.ListenAndServe(":8080", router.CreateRouter(userRepo)))
+	log.Println("Server running on :8080")
+	log.Fatal(http.ListenAndServe(":8080", router.CreateRouter(userRepo, pinRepo)))
 }
 
 // waitForDB attempts to Ping the DB with exponential backoff until the timeout elapses.
