@@ -11,7 +11,7 @@ type RegisterRequest struct {
 }
 
 type RegisterResponse struct {
-	UserID  uuid.UUID `json:"user_id"`
+	UserID uuid.UUID `json:"user_id"`
 }
 
 type LoginRequest struct {

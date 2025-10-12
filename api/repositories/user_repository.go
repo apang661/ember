@@ -138,7 +138,7 @@ func (ur *userRepository) GetFriendRequestsByUUID(id uuid.UUID) ([]models.User, 
 		return incoming, outgoing, err
 	}
 	defer rows.Close()
-	
+
 	for rows.Next() {
 		var user models.User
 		rows.Scan(
@@ -346,7 +346,7 @@ func (ur *userRepository) DeleteFriend(userID uuid.UUID, friendID uuid.UUID) (bo
 		return false, err
 	}
 
-	if rowsAffectedOne + rowsAffectedTwo == 0 {
+	if rowsAffectedOne+rowsAffectedTwo == 0 {
 		return false, nil
 	}
 

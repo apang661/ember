@@ -1,4 +1,5 @@
 package dtos
+
 import (
 	"github.com/google/uuid"
 )
@@ -11,9 +12,9 @@ type Friend struct {
 }
 
 type FriendRequest struct {
-	ID       uuid.UUID `json:"id"`
-	Username string    `json:"username"`
-	DisplayName string `json:"display_name"`
+	ID          uuid.UUID `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
 }
 
 type GetFriendsResponse struct {

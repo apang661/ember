@@ -47,4 +47,3 @@ func GetMeHandler(userRepo repositories.UserRepository) http.HandlerFunc {
 // GET /users with query params for searching users
 
 // GET /users/{userID}
-
