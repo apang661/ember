@@ -1,20 +1,29 @@
 package router
 
 import (
-	"ember/api/auth"
-	"ember/api/handlers"
-	"ember/api/repositories"
+    "encoding/json"
+    "net/http"
 
-	"github.com/go-chi/chi/v5"
+    "ember/api/auth"
+    "ember/api/handlers"
+    "ember/api/repositories"
+
+    "github.com/go-chi/chi/v5"
 )
 
 func CreateRouter(userRepo repositories.UserRepository) chi.Router {
-	r := chi.NewRouter()
+    r := chi.NewRouter()
 
-	r.Route("/auth", func(r chi.Router) {
-		r.Post("/login", handlers.PostLoginHandler(userRepo))
-		r.Post("/register", handlers.PostRegisterHandler(userRepo))
-	})
+    // Simple health/test endpoint
+    r.Get("/hello", func(w http.ResponseWriter, _ *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(map[string]string{"message": "Hello, world!"})
+    })
+
+    r.Route("/auth", func(r chi.Router) {
+        r.Post("/login", handlers.PostLoginHandler(userRepo))
+        r.Post("/register", handlers.PostRegisterHandler(userRepo))
+    })
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware)

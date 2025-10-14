@@ -9,10 +9,13 @@
 import Foundation
 
 enum SimpleAPI {
-    static let base = URL(string: "http://localhost:8080")!
+    static let base: URL = {
+        let configured = Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL") as? String
+        return URL(string: configured ?? "http://localhost:8080")!
+    }()
     static var token: String? {
-        get { UserDefaults.standard.string(forKey: "token") }
-        set { UserDefaults.standard.set(newValue, forKey: "token") }
+        get { UserDefaults.standard.string(forKey: "auth_token") }
+        set { UserDefaults.standard.set(newValue, forKey: "auth_token") }
     }
 
     // GET /path?query=...

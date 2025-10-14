@@ -1,3 +1,7 @@
+-- Required extensions
+CREATE EXTENSION IF NOT EXISTS pgcrypto;        -- for gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS postgis;         -- for GEOGRAPHY(Point, 4326)
+
 -- Users table: identity + profile info
 CREATE TABLE users (
     id              BIGSERIAL PRIMARY KEY,                 -- internal DB ID

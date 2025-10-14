@@ -15,6 +15,7 @@ struct AuthView: View {
     @State private var isLoading: Bool = false
 
     var body: some View {
+        NavigationStack {
         VStack { // center content vertically
             Spacer()
             VStack(spacing: 18) {
@@ -54,8 +55,18 @@ struct AuthView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(isLoading || email.isEmpty || password.isEmpty)
                 .padding(.horizontal)
+
+                NavigationLink {
+                    SignUpView()
+                } label: {
+                    Text("Don’t have an account? Sign up")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
+        }
+        .navigationTitle("Sign In")
         }
     }
 

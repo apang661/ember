@@ -11,13 +11,14 @@ import Foundation
 // MARK: - Auth
 
 enum AuthAPI {
-    struct RegisterRequest: Encodable { let email: String; let password: String }
+    struct RegisterRequest: Encodable { let username: String; let email: String; let password: String }
     struct LoginRequest: Encodable { let email: String; let password: String }
     struct LoginResponse: Decodable { let token: String }
+    struct RegisterResponse: Decodable { let user_id: String }
 
     @discardableResult
-    static func register(email: String, password: String) async throws -> Void {
-        let _ : EmptyDecodable = try await SimpleAPI.post("/register", body: RegisterRequest(email: email, password: password))
+    static func register(username: String, email: String, password: String) async throws -> Void {
+        try await SimpleAPI.postVoid("/auth/register", body: RegisterRequest(username: username, email: email, password: password))
     }
 
     static func login(email: String, password: String) async throws -> LoginResponse {
